@@ -10,16 +10,15 @@ Base.metadata.bind = engine
 DBSession = sessionmaker(bind=engine)
 session=DBSession()
 
-User1 = User(username="ilikebooks", email="ilikebooks@gmail.com",password="ilikebooks".password_hash)
-User2 = User(username="ialsolikebooks", email="ialsolikebooks@gmail.com",password="ialsolikebooks".password_hash)
+User1 = User(username="ilikebooks", email="ilikebooks@gmail.com")
 
-print "added users"
+print "added user"
 
 Book1 = Book(title="Cloud Atlas", author="David Mitchell", genre="Fiction", description="This is a book",user_id=1)
 session.add(Book1)
 session.commit()
 
-Book2 = Book(title="The Signal and the Noise", author="Nate Silver", genre="Nonfiction", description="This is also a book",user_id=2)
+Book2 = Book(title="The Signal and the Noise", author="Nate Silver", genre="Nonfiction", description="This is also a book",user_id=1)
 session.add(Book2)
 session.commit()
 
