@@ -6,11 +6,9 @@ from functools import wraps
 from models import Base, User, Book
 from flask import Flask, jsonify, request, render_template, url_for, redirect, flash
 from flask import session as login_session
-# from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy import create_engine
 from flask_httpauth import HTTPBasicAuth
-# from wtforms import Form, StringField, PasswordField, validators
 
 auth = HTTPBasicAuth()
 
