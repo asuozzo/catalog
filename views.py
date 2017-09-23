@@ -1,11 +1,16 @@
-from models import Base, User, Book, RegistrationForm
-from flask import Flask, jsonify, session, request, render_template, url_for, redirect, flash
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import relationship, sessionmaker
+import random
+import string
+import json
+import httplib2
+from functools import wraps
+from models import Base, User, Book
+from flask import Flask, jsonify, request, render_template, url_for, redirect, flash
+from flask import session as login_session
+# from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import sessionmaker
 from sqlalchemy import create_engine
 from flask_httpauth import HTTPBasicAuth
-from wtforms import Form, StringField, PasswordField, validators
-from functools import wraps
+# from wtforms import Form, StringField, PasswordField, validators
 
 auth = HTTPBasicAuth()
 
@@ -13,75 +18,122 @@ engine = create_engine('sqlite:///library.db')
 
 Base.metadata.bind = engine
 DBSession = sessionmaker(bind=engine)
-dbsession = DBSession()
+session = DBSession()
 app = Flask(__name__)
-
 
 def check_login(f):
     @wraps(f)
     def wrapper(*args, **kwargs):
-        if "username" in  session:
-            return f(*args,**kwargs)
-        else:
-            flash("whoops, you need to be logged in to do that!")
-            return redirect(url_for("login"))
+        if "username" in  login_session:
+            return f(*args, **kwargs)
+        flash("whoops, you need to be logged in to do that!")
+        return redirect(url_for("login"))
     return wrapper
 
 def check_object_owner(username):
-    if username == session["username"]:
+    if username == login_session["username"]:
         return True
-    else:
-        return False
-
-def verify_password(username, password):
-    user = dbsession.query(User).filter_by(username=username).first()
-    if not user or not user.verify_password(password):
-        return False
-    return True
+    return False
 
 
-@app.route('/login', methods=['GET', 'POST'])
+@app.route('/login')
 def login():
-    form = RegistrationForm(request.form)
-    if request.method == 'POST':
-        username = form.username.data
-        password = form.password.data
-        if verify_password(username,password):
-            session['username'] = username
-            flash("You're now logged in")
-            return redirect(url_for("showAllBooks"))
-        else:
-            error = "Sorry, that login doesn't look quite right"
-            return render_template('login.html', form=form, error=error)
-    return render_template('login.html', form=form)
+    state = ''.join(random.choice(string.ascii_uppercase + string.digits)
+                    for x in xrange(32))
+    login_session['state'] = state
+    return render_template('login.html', STATE=state)
 
+@app.route('/fbconnect', methods=['POST'])
+def fbconnect():
+    if request.args.get("state") != login_session['state']:
+        response = make_response(json.dumps("Invalid state parameter"), 401)
+        response.headers['Content-Type'] = "application/json"
+        return response
+    access_token = request.data
 
-@app.route('/logout', methods=['GET'])
+    # Exchange client token for server-side token
+    app_id = json.loads(open('fb_client_secrets.json', "r").read())["web"]["app_id"]
+    app_secret = json.loads(open('fb_client_secrets.json', "r").read())["web"]["app_secret"]
+    url = ("https://graph.facebook.com/oauth/access_token?grant_type=fb_exchange_token&client_id=%s&client_secret=%s&fb_exchange_token=%s") % (app_id,app_secret,access_token)
+    h = httplib2.Http()
+    result = h.request(url, "GET")[1]
+    data = json.loads(result)
+
+    userinfo_url = "https://graph.facebook.com/v2.8/me"
+    token = "access_token="+data["access_token"]
+
+    url = ("https://graph.facebook.com/v2.8/me?%s&fields=name,id,email") % (token)
+    h = httplib2.Http()
+    result = h.request(url, "GET")[1]
+
+    data = json.loads(result)
+
+    login_session['provider'] = "facebook"
+    login_session["username"] = data["name"]
+    login_session["email"] = data["email"]
+    login_session["facebook_id"] = data["id"]
+
+    stored_token = token.split("=")[1]
+    login_session['access_token'] = stored_token
+
+    user_id = getUserID(login_session['email'])
+    if not user_id:
+        user_id = createUser(login_session)
+    login_session["user_id"] = user_id
+
+    output = ""
+    output += "<h1>Welcome, "
+    output += login_session["username"]
+    output += "!</h1>"
+    flash("Now logged in as %s" % login_session['username'])
+    return output
+
+@app.route("/fbdisconnect/")
+def fbdisconnect():
+    facebook_id = login_session["facebook_id"]
+    access_token = login_session["access_token"]
+    url = 'https://graph.facebook.com/%s/permissions?access_token=%s' % (facebook_id,access_token)
+    h = httplib2.Http()
+    result = h.request(url, 'DELETE')[1]
+    return "you have been logged out"
+
+@app.route('/logout')
 def logout():
-    session.pop('username', None)
-    return redirect(url_for("showAllBooks"))
+    if 'provider' in login_session:
+        fbdisconnect()
+        del login_session['facebook_id']
+        del login_session['username']
+        del login_session['email']
+        del login_session['user_id']
+        del login_session['provider']
+
+        flash("you have been logged out.")
+        return redirect(url_for("showAllBooks"))
+    else:
+        flash("You weren't logged in to begin with!")
+        return redirect(url_for('showAllBooks'))
 
 
 @app.route('/signup', methods=['GET', 'POST'])
 def signup():
     form = RegistrationForm(request.form)
     if request.method == 'POST':
-        username=form.username.data
-        email=form.email.data
-        if dbsession.query(User).filter_by(username=username).first():
+        username = form.username.data
+        email = form.email.data
+        if session.query(User).filter_by(username=username).first():
             error = "Username already exists"
             return render_template('signup.html', form=form, error=error)
-        if dbsession.query(User).filter_by(email=email).first():
+        if session.query(User).filter_by(email=email).first():
             error = "A user with that email is already registered"
             return render_template('signup.html', form=form, error=error)
         if form.validate():
-            newUser=User(username=form.username.data,
-                      email=form.email.data)
-            password=form.password.data
+            newUser = User(username=form.username.data,
+                           email=form.email.data)
+            password = form.password.data
             newUser.hash_password(password)
-            dbsession.add(newUser)
-            dbsession.commit()
-            session['username'] = username
+            session.add(newUser)
+            session.commit()
+            login_session['username'] = username
             flash("Welcome! Thanks for registering!")
             return redirect(url_for("showAllBooks"))
     return render_template('signup.html', form=form)
@@ -90,65 +142,65 @@ def signup():
 @app.route('/')
 @app.route('/library/')
 def showAllBooks():
-    books = dbsession.query(Book).all()
-    genres = [b.genre for b in dbsession.query(Book.genre).distinct()]
-    return render_template('home.html', books=books,genres=genres)
+    books = session.query(Book).all()
+    genres = [b.genre for b in session.query(Book.genre).distinct()]
+    return render_template('home.html', books=books, genres=genres)
 
 
 @app.route("/library/<book_genre>")
 def showGenreBooks(book_genre):
-    books = dbsession.query(Book).filter_by(genre=book_genre)
-    return render_template('genre.html', genre=book_genre,books=books)
+    books = session.query(Book).filter_by(genre=book_genre)
+    return render_template('genre.html', genre=book_genre, books=books)
 
 
 @app.route('/library/<int:book_id>/')
 def showBook(book_id):
-    book = dbsession.query(Book).filter_by(id=book_id).one()
-    user = dbsession.query(User).filter_by(id=book.user_id).one()
+    book = session.query(Book).filter_by(id=book_id).one()
+    user = session.query(User).filter_by(id=book.user_id).one()
     username = user.username
-    return render_template('item.html',book=book,username=username)
+    return render_template('item.html', book=book, username=username)
 
 
-@app.route('/library/<int:book_id>/edit', methods=['GET','POST'])
+@app.route('/library/<int:book_id>/edit', methods=['GET', 'POST'])
 @check_login
 def editBook(book_id):
-    book = dbsession.query(Book).filter_by(id=book_id).one()
-    user = dbsession.query(User).filter_by(username=session['username']).one()
+    book = session.query(Book).filter_by(id=book_id).one()
+    user = session.query(User).filter_by(username=login_session['username']).one()
     if user.id == book.user_id:
         if request.method == 'POST':
             book.title = request.form['title']
             book.author = request.form['author']
             book.description = request.form['description']
             book.genre = request.form['genre']
-            dbsession.commit()
+            session.commit()
             flash("Item successfully edited")
             return redirect(url_for("showBook", book_id=book.id))
-        return render_template('edit.html',book=book)
+        return render_template('edit.html', book=book)
     else:
         flash("Sorry, you can't edit a book you didn't create.")
         return redirect(url_for("showBook", book_id=book.id))
 
 
-@app.route('/library/<int:book_id>/delete', methods=['GET','POST'])
+@app.route('/library/<int:book_id>/delete', methods=['GET', 'POST'])
 @check_login
 def deleteBook(book_id):
-    book = dbsession.query(Book).filter_by(id=book_id).one()
-    user = dbsession.query(User).filter_by(username=session['username']).one()
+    book = session.query(Book).filter_by(id=book_id).one()
+    user = session.query(User).filter_by(username=login_session['username']).one()
     if user.id == book.user_id:
         if request.method == 'POST':
-            user = dbsession.query(User).filter_by(username=session['username']).one()
-            dbsession.delete(book)
-            dbsession.commit()
+            user = session.query(User).filter_by(username=login_session['username']).one()
+            session.delete(book)
+            session.commit()
             flash("Item successfully deleted")
             return redirect(url_for("showAllBooks"))
-        return render_template('delete.html',book=book)
+        return render_template('delete.html', book=book)
     else:
         flash("Sorry, you can't delete a book you didn't create.")
         return redirect(url_for("showBook", book_id=book.id))
 
 
 
-@app.route('/library/add', methods = ['GET','POST'])
+@app.route('/library/add', methods=['GET', 'POST'])
 @check_login
 def addBook():
     if request.method == 'POST':
@@ -156,10 +208,10 @@ def addBook():
                        author=request.form['author'],
                        description=request.form['description'],
                        genre=request.form['genre'])
-        user = dbsession.query(User).filter_by(username=session["username"]).one()
+        user = session.query(User).filter_by(username=login_session["username"]).one()
         newBook.user_id = user.id
-        dbsession.add(newBook)
-        dbsession.commit()
+        session.add(newBook)
+        session.commit()
         flash("Success!")
         return redirect(url_for("showAllBooks"))
     return render_template('additem.html')
@@ -167,8 +219,22 @@ def addBook():
 
 @app.route('/library/json')
 def jsonifyBooks():
-    books = dbsession.query(Book).all()
-    return jsonify(books = [book.serialize for book in books])
+    books = session.query(Book).all()
+    return jsonify(books=[book.serialize for book in books])
+
+def getUserID(email):
+    try:
+        user = session.query(User).filter_by(email=email).one()
+        return user.id
+    except:
+        return None
+
+def createUser(login_session):
+    newUser = User(username=login_session['username'], email=login_session['email'])
+    session.add(newUser)
+    session.commit()
+    user = session.query(User).filter_by(email=login_session['email']).one()
+    return user.id
 
 
 if __name__ == '__main__':
