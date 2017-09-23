@@ -8,9 +8,7 @@ from flask import Flask, jsonify, request, render_template, url_for, redirect, f
 from flask import session as login_session
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy import create_engine
-from flask_httpauth import HTTPBasicAuth
-
-auth = HTTPBasicAuth()
+from flask import make_response
 
 engine = create_engine('sqlite:///library.db')
 
@@ -57,7 +55,6 @@ def fbconnect():
     result = h.request(url, "GET")[1]
     data = json.loads(result)
 
-    userinfo_url = "https://graph.facebook.com/v2.8/me"
     token = "access_token="+data["access_token"]
 
     url = ("https://graph.facebook.com/v2.8/me?%s&fields=name,id,email") % (token)
@@ -105,37 +102,11 @@ def logout():
         del login_session['user_id']
         del login_session['provider']
 
-        flash("you have been logged out.")
+        flash("You have been logged out.")
         return redirect(url_for("showAllBooks"))
     else:
-        flash("You weren't logged in to begin with!")
+        flash("Whoops, we can't log you out because you weren't logged in!")
         return redirect(url_for('showAllBooks'))
-
-
-@app.route('/signup', methods=['GET', 'POST'])
-def signup():
-    form = RegistrationForm(request.form)
-    if request.method == 'POST':
-        username = form.username.data
-        email = form.email.data
-        if session.query(User).filter_by(username=username).first():
-            error = "Username already exists"
-            return render_template('signup.html', form=form, error=error)
-        if session.query(User).filter_by(email=email).first():
-            error = "A user with that email is already registered"
-            return render_template('signup.html', form=form, error=error)
-        if form.validate():
-            newUser = User(username=form.username.data,
-                           email=form.email.data)
-            password = form.password.data
-            newUser.hash_password(password)
-            session.add(newUser)
-            session.commit()
-            login_session['username'] = username
-            flash("Welcome! Thanks for registering!")
-            return redirect(url_for("showAllBooks"))
-    return render_template('signup.html', form=form)
-
 
 @app.route('/')
 @app.route('/library/')
@@ -227,11 +198,11 @@ def getUserID(email):
     except:
         return None
 
-def createUser(login_session):
-    newUser = User(username=login_session['username'], email=login_session['email'])
+def createUser(loginsession):
+    newUser = User(username=loginsession['username'], email=loginsession['email'])
     session.add(newUser)
     session.commit()
-    user = session.query(User).filter_by(email=login_session['email']).one()
+    user = session.query(User).filter_by(email=loginsession['email']).one()
     return user.id
 
 
