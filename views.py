@@ -9,13 +9,16 @@ from flask import session as login_session
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy import create_engine
 from flask import make_response
+import os
 
-engine = create_engine('sqlite:///library.db')
+engine = create_engine('postgresql://postgres:udacity@localhost/catalog')
 
 Base.metadata.bind = engine
 DBSession = sessionmaker(bind=engine)
 session = DBSession()
 app = Flask(__name__)
+app.config['SECRET_KEY'] = "super_secret_key"
+path_to_folder = "/vagrant/server/"
 
 def check_login(f):
     @wraps(f)
@@ -48,8 +51,8 @@ def fbconnect():
     access_token = request.data
 
     # Exchange client token for server-side token
-    app_id = json.loads(open('fb_client_secrets.json', "r").read())["web"]["app_id"]
-    app_secret = json.loads(open('fb_client_secrets.json', "r").read())["web"]["app_secret"]
+    app_id = json.loads(open(path_to_folder + 'fb_client_secrets.json', "r").read())["web"]["app_id"]
+    app_secret = json.loads(open(path_to_folder + 'fb_client_secrets.json', "r").read())["web"]["app_secret"]
     url = ("https://graph.facebook.com/oauth/access_token?grant_type=fb_exchange_token&client_id=%s&client_secret=%s&fb_exchange_token=%s") % (app_id,app_secret,access_token)
     h = httplib2.Http()
     result = h.request(url, "GET")[1]
@@ -207,6 +210,5 @@ def createUser(loginsession):
 
 
 if __name__ == '__main__':
-    app.secret_key = "super_secret_key"
     app.debug = True
     app.run(host='0.0.0.0', port=5000)

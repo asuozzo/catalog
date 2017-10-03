@@ -33,6 +33,6 @@ class Book(Base):
         }
 
 
-engine = create_engine('sqlite:///library.db')
+engine = create_engine('postgresql://postgres:udacity@localhost/catalog')
 
 Base.metadata.create_all(engine)
